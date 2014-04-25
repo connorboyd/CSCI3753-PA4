@@ -1,0 +1,3 @@
+mkdir Root
+mkdir Mountpoint
+./pa4-encfs pass Root Mountpoint
