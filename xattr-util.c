@@ -84,9 +84,10 @@ int main(int argc, char* argv[]){
     ssize_t valsize = 0;
 
     /* Check base input */
-    if(argc < 2){
-	printUsageGeneral(argv[0]);
-	exit(EXIT_FAILURE);
+    if(argc < 2)
+    {
+		printUsageGeneral(argv[0]);
+		exit(EXIT_FAILURE);
     }
     
     /* Parse Command */

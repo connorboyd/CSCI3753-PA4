@@ -9,6 +9,10 @@
 
 */
 
+#define ENCRYPT 1
+#define DECRYPT 0
+#define PASS_THROUGH -1
+
 #define FUSE_USE_VERSION 28
 #define HAVE_SETXATTR
 
@@ -18,8 +22,10 @@
 
 #ifdef linux
 /* For pread()/pwrite() */
-#define _XOPEN_SOURCE 500
+#define _XOPEN_SOURCE 700
 #endif
+
+#include "aes-crypt.h"
 
 #include <limits.h>
 #include <fuse.h>
@@ -34,8 +40,11 @@
 #include <sys/xattr.h>
 #endif
 
+ #include "aes-crypt.h"
+
 typedef struct {
 	char *rootdir;
+	char *encryptionKey;
 } encfs_data;
 
 static void encfs_fullpath(char fpath[PATH_MAX], const char *path)
@@ -83,7 +92,6 @@ static int encfs_readlink(const char *path, char *buf, size_t size)
 	buf[res] = '\0';
 	return 0;
 }
-
 
 static int encfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
@@ -287,40 +295,87 @@ static int encfs_open(const char *path, struct fuse_file_info *fi)
 static int encfs_read(const char *path, char *buf, size_t size, off_t offset,
 		    struct fuse_file_info *fi)
 {
-	int fd;
-	int res;
-	char fpath[PATH_MAX];
-	encfs_fullpath(fpath, path);
-	(void) fi;
-	fd = open(fpath, O_RDONLY);
-	if (fd == -1)
-		return -errno;
+	
+	FILE *memFile;
+	char *memText;
+	size_t memSize;
 
-	res = pread(fd, buf, size, offset);
+	encfs_data *fuseData = 	(encfs_data *) (fuse_get_context()->private_data);
+	char *key = fuseData->encryptionKey;
+
+	// int fd;		//Result of open call
+	int res;	//result of pread call
+	char fpath[PATH_MAX];	//holds full path
+	encfs_fullpath(fpath, path);	//Turns path into full path 
+	(void) fi;		//Fuse file info?
+	FILE *f;
+	f = fopen(fpath, "r");
+	// fd = open(fpath, O_RDONLY);
+	// if (fd == -1)
+	// 	return -errno;
+
+	memFile = open_memstream(&memText, &memSize);
+
+	do_crypt(f, memFile, DECRYPT, key);
+
+	res = pread(memFile, buf, size, offset);
 	if (res == -1)
 		res = -errno;
 
-	close(fd);
+	// close(fd);
+	fclose(f);
+
+	fflush(memFile);
+	fseek(memFile, offset, SEEK_SET);
+	res = fread(buf, 1, size, memFile);
+	fclose(memFile);
+
 	return res;
 }
 
 static int encfs_write(const char *path, const char *buf, size_t size,
 		     off_t offset, struct fuse_file_info *fi)
 {
-	int fd;
+	// int fd;
 	int res;
 	char fpath[PATH_MAX];
 	encfs_fullpath(fpath, path);
 	(void) fi;
-	fd = open(fpath, O_WRONLY);
-	if (fd == -1)
-		return -errno;
 
-	res = pwrite(fd, buf, size, offset);
-	if (res == -1)
-		res = -errno;
+	encfs_data *fuseData = 	(encfs_data *) (fuse_get_context()->private_data);
+	char *key = fuseData->encryptionKey;
 
-	close(fd);
+	FILE *f, *memFile;
+	char *memText;
+	size_t memSize;
+
+	memFile = open_memstream(&memText, &memSize);
+	f = fopen(fpath, "r");
+
+	do_crypt(f, memFile, DECRYPT, key);
+	fclose(f);
+
+	fseek(memFile, offset, SEEK_SET);
+	res = fwrite(buf, 1, size, memFile);
+
+	fflush(memFile);
+	f = fopen(fpath, "w");
+	fseek(memFile, 0, SEEK_SET);
+	do_crypt(memFile, f, ENCRYPT, key);
+	fclose(memFile);
+	fclose(f);
+
+
+
+	// fd = open(fpath, O_WRONLY);
+	// if (fd == -1)
+	// 	return -errno;
+
+	// res = pwrite(fd, buf, size, offset);
+	// if (res == -1)
+	// 	res = -errno;
+
+	// close(fd);
 	return res;
 }
 
@@ -372,6 +427,22 @@ static int encfs_fsync(const char *path, int isdatasync,
 	(void) isdatasync;
 	(void) fi;
 	return 0;
+}
+
+static long encfs_getEncryptedSize(char *path)
+{
+	FILE *f, *temp;
+
+	encfs_data *fuseData = 	(encfs_data *) (fuse_get_context()->private_data);
+	char *key = fuseData->encryptionKey;
+
+
+	f = fopen(path, "r");
+
+	temp = tmpfile();
+	do_crypt(f, temp, DECRYPT, key);
+	fseek(temp, 0, SEEK_END);
+	return ftell(temp);
 }
 
 #ifdef HAVE_SETXATTR
@@ -452,14 +523,14 @@ static struct fuse_operations encfs_oper = {
 int main(int argc, char *argv[])
 {
 	printf("argv[1] = %s\n",argv[1] );
-
 	printf("argv[2] = %s\n",argv[2] );
-
 	printf("argv[3] = %s\n",argv[3] );
-
-	// printf("argv[4] = %s\n",argv[4] );
+	printf("argv[4] = %s\n",argv[4] );
+	
 	encfs_data data;
 	data.rootdir = realpath(argv[2], NULL);
+	data.encryptionKey = argv[1];
+	printf("encryptionKey = %s\n", data.encryptionKey);
 	printf("rootdir = %s\n", data.rootdir);
 	umask(0);
 	return fuse_main(argc-2, argv+2, &encfs_oper, &data);
