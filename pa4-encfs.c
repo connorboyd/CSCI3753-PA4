@@ -398,8 +398,9 @@ static int encfs_create(const char* path, mode_t mode, struct fuse_file_info* fi
 	encfs_fullpath(fpath, path);
     int res;
     res = creat(fpath, mode);
+
     if(res == -1)
-	return -errno;
+		return -errno;
 
     close(res);
 
@@ -427,22 +428,6 @@ static int encfs_fsync(const char *path, int isdatasync,
 	(void) isdatasync;
 	(void) fi;
 	return 0;
-}
-
-static long encfs_getEncryptedSize(char *path)
-{
-	FILE *f, *temp;
-
-	encfs_data *fuseData = 	(encfs_data *) (fuse_get_context()->private_data);
-	char *key = fuseData->encryptionKey;
-
-
-	f = fopen(path, "r");
-
-	temp = tmpfile();
-	do_crypt(f, temp, DECRYPT, key);
-	fseek(temp, 0, SEEK_END);
-	return ftell(temp);
 }
 
 #ifdef HAVE_SETXATTR
